@@ -577,6 +577,8 @@ class Report:
                 elem = ImageElement(self, doc_element)
             elif element_type == DocElementType.bar_code:
                 elem = BarCodeElement(self, doc_element)
+            elif element_type == DocElementType.qr_code:
+                elem = QrCodeElement(self, doc_element)
             elif element_type == DocElementType.table:
                 elem = TableElement(self, doc_element)
             elif element_type == DocElementType.page_break:

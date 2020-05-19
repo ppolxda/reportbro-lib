@@ -45,7 +45,8 @@ setup(
         'Pillow>=4.0',
         'simpleeval>=0.9.10',
         'typing',
-        'xlsxwriter'
+        'xlsxwriter',
+        'qrcode>=6.1'
     ],
 
     package_data={

@@ -9,6 +9,7 @@ import datetime
 import decimal
 import PIL
 import tempfile
+import qrcode
 
 from .barcode128 import code128_image
 from .context import Context
@@ -167,6 +168,55 @@ class BarCodeElement(DocElement):
             row += 2 if self.spreadsheet_add_empty_row else 1
             col += 1
         return row, col
+
+
+class QrCodeElement(BarCodeElement):
+    def __init__(self, report, data):
+        BarCodeElement.__init__(self, report, data)
+        self.img_fill_color = data.get('color', 'black')
+        self.img_back_color = data.get('backgroundColor', 'white')
+        self.img_version = get_int_value(data, 'version')
+        self.img_border = get_int_value(data, 'border')
+
+        if self.img_version <= 0:
+            self.img_version = None
+
+        if self.img_border <= 0:
+            self.img_border = 4
+
+        if self.width <= 0:
+            self.width = 21
+
+        self.height = self.width
+        self.image_height = self.width
+        self.image_width = self.width
+        self.bottom = self.y + self.height
+
+    def prepare(self, ctx, pdf_doc, only_verify):
+        self.image_key = None
+        self.prepared_content = ctx.fill_parameters(
+            self.content, self.id, field='content')
+        if self.prepared_content:
+            try:
+                qr = qrcode.QRCode(
+                    version=self.img_version,
+                    # error_correction=qrcode.constants.ERROR_CORRECT_L,
+                    box_size=self.height,
+                    border=self.img_border,
+                )
+                qr.add_data(self.prepared_content)
+                qr.make()
+                img = qr.make_image(
+                    fill_color=self.img_fill_color,
+                    back_color=self.img_back_color
+                )
+            except:
+                raise ReportBroError(
+                    Error('errorMsgInvalidQrCode', object_id=self.id, field='content'))
+            if not only_verify:
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as f:
+                    img.save(f.name)
+                    self.image_key = f.name
 
 
 class LineElement(DocElement):
