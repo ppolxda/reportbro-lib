@@ -1969,7 +1969,7 @@ class CheckboxElement(TextElement):
         self.rich_text_html = ""
         self.rich_text_content = ""
         # self.checkbox_width = get_int_value(data, 'checkboxWidth') or 80
-        self.checkbox = get_str_value(data, 'checkboxIf')
+        self.checkbox_if = get_str_value(data, 'checkboxIf')
         self.data_source = get_str_value(data, 'dataSource')
         self.join_padding_left = get_int_value(data, 'joinPaddingLeft') or 10
         self.row_parameters = {}
@@ -2006,7 +2006,7 @@ class CheckboxElement(TextElement):
 
         else:
             label_content = ctx.fill_parameters(self.content, self.id, field='content', pattern=self.pattern) or "label"
-            checkbox_content = ctx.evaluate_expression(self.checkbox, self.id, field='checkbox')
+            checkbox_content = ctx.evaluate_expression(self.checkbox_if, self.id, field='checkboxIf')
             text_lines = [{"text":  label_content, "check": checkbox_content}]
 
         # Check if the checkbox element width exceeds the container width
@@ -2041,7 +2041,7 @@ class CheckboxElement(TextElement):
             ctx.push_context(self.row_parameters, self.rows[row_index], data_source=self.data_source_parameter)
             
             label_content = ctx.fill_parameters(self.content, self.id, field='content', pattern=self.pattern) or "label"
-            checkbox_content = ctx.evaluate_expression(self.checkbox, self.id, field='checkbox')
+            checkbox_content = ctx.evaluate_expression(self.checkbox_if, self.id, field='checkboxIf')
             checkbox_lines.append({"text":  label_content, "check": checkbox_content})
             ctx.pop_context()
             row_index += 1        
