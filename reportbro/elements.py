@@ -1969,7 +1969,7 @@ class CheckboxElement(TextElement):
         self.rich_text_html = ""
         self.rich_text_content = ""
         # self.checkbox_width = get_int_value(data, 'checkboxWidth') or 80
-        self.checkbox = get_str_value(data, 'checkbox')
+        self.checkbox = get_str_value(data, 'checkboxIf')
         self.data_source = get_str_value(data, 'dataSource')
         self.join_padding_left = get_int_value(data, 'joinPaddingLeft') or 10
         self.row_parameters = {}
