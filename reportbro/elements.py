@@ -408,7 +408,7 @@ class TextElement(DocElement):
             return False
         return DocElementBase.is_printed(self, ctx)
 
-    def prepare(self, ctx, pdf_doc, only_verify):
+    def get_content(self, ctx, pdf_doc):
         if not self.rich_text:
             if self.eval:
                 content = ctx.evaluate_expression(self.content, self.id, field='content')
@@ -443,7 +443,9 @@ class TextElement(DocElement):
                         Error('errorMsgInvalidLink', object_id=self.id, field='link'))
         else:
             content = None
+        return content
 
+    def prepare_used_style(self, ctx):
         if self.cs_condition:
             if ctx.evaluate_expression(self.cs_condition, self.id, field='cs_condition'):
                 self.used_style = self.conditional_style
@@ -459,8 +461,12 @@ class TextElement(DocElement):
         if self.used_style.vertical_alignment != VerticalAlignment.top and not self.always_print_on_same_page and\
                 not isinstance(self, TableTextElement):
             self.always_print_on_same_page = True
-        available_width = self.width - self.used_style.padding_left - self.used_style.padding_right
 
+    def prepare(self, ctx, pdf_doc, only_verify):
+        content = self.get_content(ctx, pdf_doc)
+        self.prepare_used_style(ctx)
+        
+        available_width = self.width - self.used_style.padding_left - self.used_style.padding_right
         self.text_lines = []
         if pdf_doc:
             self.split_text_lines(content, available_width=available_width, ctx=ctx, pdf_doc=pdf_doc)
@@ -740,6 +746,52 @@ class TextBlockElement(DocElementBase):
                 line.render_pdf(self.x + container_offset_x + self.style.padding_left, y, pdf_doc=pdf_doc)
                 y += line.height
 
+
+class TextBlockFlexRowElement(TextBlockElement):
+
+    def __init__(self, report, x, y, render_y, width, height, text_offset_y,
+                 lines, render_element_type, style, join_padding_left):
+        super().__init__(report, x, y, render_y, width, height, text_offset_y,
+                         lines, render_element_type, style)
+        self.join_padding_left = join_padding_left
+
+    def render_pdf(self, container_offset_x, container_offset_y, pdf_doc):
+        y = container_offset_y + self.render_y
+        if not self.style.background_color.transparent:
+            pdf_doc.set_fill_color(
+                self.style.background_color.r, self.style.background_color.g, self.style.background_color.b)
+            pdf_doc.rect(self.x + container_offset_x, y, self.width, self.height, style='F')
+
+        if (self.style.border_left or self.style.border_top or
+                self.style.border_right or self.style.border_bottom):
+            DocElement.draw_border(
+                x=self.x+container_offset_x, y=y, width=self.width, height=self.height,
+                render_element_type=self.render_element_type, border_style=self.style, pdf_doc=pdf_doc)
+
+        if self.render_element_type in (RenderElementType.complete, RenderElementType.first):
+            y += self.style.padding_top
+
+        y += self.text_offset_y
+
+        if self.lines:
+            self.lines[-1].last_line = True
+            available_width = self.width
+            x = x_first = self.x + container_offset_x + self.style.padding_left
+            
+            height = set(line.height for line in self.lines)
+            if len(height) != 1:
+                raise ReportBroError(
+                    Error('errorMsgTextHeightNotSameError', object_id=self.id, field='TextBlockFlexRowElement'))
+
+            for line in self.lines:
+                assert isinstance(line, TextLine)
+                if line.width > available_width:
+                    y += line.height
+                    x = x_first
+                
+                # self.width
+                line.render_pdf(x, y, pdf_doc=pdf_doc)
+                x += line.width + self.join_padding_left
 
 class TextLine(object):
     def __init__(self, width, style, link=None, object_id=None):
@@ -1875,3 +1927,237 @@ class SectionElement(DocElement):
             self.footer.container.prepare(ctx, pdf_doc=None)
             row, _ = self.footer.container.render_spreadsheet(row, col, ctx, renderer)
         return row, col
+
+
+class TextCheckbox(TextLine):
+
+    def __init__(self, width, style, link=None, object_id=None):
+        super().__init__(width, style, link, object_id)
+        self.checkbox = False
+
+    def add_checkbox(self, checkbox, text, text_width, style, link=None):
+        self.text = TextLinePart(text, text_width, style, link)
+        self.checkbox = checkbox
+
+    def render_pdf(self, x, y, pdf_doc):
+        pdf_doc.set_font(family=self.style.font, style=self.style.font_style,
+                         size=self.style.font_size, underline=self.style.underline)
+
+        # only HorizontalAlignment.left
+        offset_x = 0
+        render_x = x + offset_x
+        render_y = y + self.baseline_offset_y
+        pdf_doc.print_text(render_x, render_y, self.text.text, object_id=self.object_id, field='content')
+        
+        if self.checkbox:
+            checkbox = "☑"
+        else:
+            # checkbox = "☐"
+            checkbox = "⬜"
+        
+        # load emojs font
+        pdf_doc.set_font(family="NotoEmoji", size=self.style.font_size, underline=self.style.underline)
+        pdf_doc.print_text(render_x, render_y, checkbox, object_id=self.object_id, field='content')
+
+
+class CheckboxElement(TextElement):
+    def __init__(self, report, data):
+        super().__init__(report, data)
+        # checkbox not set
+        self.eval = False
+        self.rich_text = False
+        self.rich_text_html = ""
+        self.rich_text_content = ""
+        # self.checkbox_width = get_int_value(data, 'checkboxWidth') or 80
+        self.checkbox = get_str_value(data, 'checkbox')
+        self.data_source = get_str_value(data, 'dataSource')
+        self.join_padding_left = get_int_value(data, 'joinPaddingLeft') or 10
+        self.row_parameters = {}
+
+    def prepare(self, ctx, pdf_doc, only_verify):
+        self.prepare_used_style(ctx)
+
+        # if set data source will use  checkbox group
+        if self.data_source:
+            parameter_name = Context.strip_parameter_name(self.data_source)
+            param_ref = ctx.get_parameter(parameter_name)
+            if param_ref is None:
+                raise ReportBroError(
+                    Error('errorMsgMissingDataSourceParameter', object_id=self.id, field='dataSource'))
+
+            self.data_source_parameter = param_ref.parameter
+            if self.data_source_parameter.type != ParameterType.array:
+                raise ReportBroError(
+                    Error('errorMsgInvalidDataSourceParameter', object_id=self.id, field='dataSource'))
+
+            for row_parameter in self.data_source_parameter.children:
+                self.row_parameters[row_parameter.name] = row_parameter
+
+            self.rows, parameter_exists = ctx.get_parameter_data(param_ref)
+            if not parameter_exists:
+                raise ReportBroError(
+                    Error('errorMsgMissingData', object_id=self.id, field='dataSource'))
+
+            if not isinstance(self.rows, list):
+                raise ReportBroError(
+                    Error('errorMsgInvalidDataSource', object_id=self.id, field='dataSource'))
+
+            text_lines = self.prepare_process_checkboxs(ctx, pdf_doc)
+
+        else:
+            label_content = ctx.fill_parameters(self.content, self.id, field='content', pattern=self.pattern) or "label"
+            checkbox_content = ctx.evaluate_expression(self.checkbox, self.id, field='checkbox')
+            text_lines = [{"text":  label_content, "check": checkbox_content}]
+
+        # Check if the checkbox element width exceeds the container width
+        # self.split_checkbox_lines(content, checkbox, available_width=available_width, ctx=ctx, pdf_doc=pdf_doc)
+        self.text_lines = []
+        for i in text_lines:
+            content = " " * 6 + i["text"]
+            checkbox = True if i["check"] else False
+            checkbox_lines = self.process_split_checkbox_lines(ctx, pdf_doc, content, checkbox)
+            if len(checkbox_lines) != 1:
+                raise ReportBroError(
+                    Error('errorMsgCheckboxTooLongError', object_id=self.id, field='content', context=self.content))
+
+            self.text_lines += checkbox_lines
+
+        self.line_index = 0
+        self.text_height = 0
+        self.lines_count = len(self.text_lines)
+        if self.lines_count > 0:
+            self.text_lines[-1].last_line = True
+            for text_line in self.text_lines:
+                text_line.setup()
+                self.text_height += text_line.height
+
+    def prepare_process_checkboxs(self, ctx, pdf_doc):
+        row_count = len(self.rows)
+        row_index = 0
+
+        checkbox_lines = []
+        while row_index < row_count:
+            # push data context of current row so values of current row can be accessed
+            ctx.push_context(self.row_parameters, self.rows[row_index], data_source=self.data_source_parameter)
+            
+            label_content = ctx.fill_parameters(self.content, self.id, field='content', pattern=self.pattern) or "label"
+            checkbox_content = ctx.evaluate_expression(self.checkbox, self.id, field='checkbox')
+            checkbox_lines.append({"text":  label_content, "check": checkbox_content})
+            ctx.pop_context()
+            row_index += 1        
+
+        return checkbox_lines
+
+    def process_split_checkbox_lines(self, ctx, pdf_doc, content, checkbox):
+        available_width = self.width - self.used_style.padding_left - self.used_style.padding_right
+        text_lines = self.split_checkbox_lines(content, checkbox, available_width=available_width, ctx=ctx, pdf_doc=pdf_doc)
+        self.set_height(self.height)
+        return text_lines
+
+    def split_checkbox_lines(self, content, checkbox, available_width, ctx, pdf_doc):
+        text_lines = []
+        if content is None:
+            raise ReportBroError(Error('errorMsgPlusVersionRequired', object_id=self.id, field='content'))
+
+        self.set_font_by_style(self.used_style, pdf_doc)
+        try:
+            lines = pdf_doc.split_text(first_w=available_width, w=available_width, txt=content)
+        except UnicodeEncodeError:
+            raise ReportBroError(
+                Error('errorMsgUnicodeEncodeError', object_id=self.id, field='content', context=self.content))
+
+        for line in lines:
+            text_line = TextCheckbox(
+                width=available_width, style=self.used_style, link=self.prepared_link, object_id=self.id
+            )
+            text, text_width, _ = line
+            text_line.add_checkbox(checkbox, text, text_width, self.used_style)
+            text_lines.append(text_line)
+        return text_lines
+
+    def get_next_render_element(self, offset_y, container_top, container_width, container_height, ctx, pdf_doc):
+        available_height = container_height - offset_y
+        if self.always_print_on_same_page and self.first_render_element and\
+                self.total_height > available_height and (offset_y != 0 or container_top != 0):
+            return None, False
+
+        lines = []
+        remaining_height = available_height
+        block_height = 0
+        text_height = 0
+        text_offset_y = 0
+        if self.space_top > 0:
+            space_top = min(self.space_top, remaining_height)
+            self.space_top -= space_top
+            block_height += space_top
+            remaining_height -= space_top
+            text_offset_y = space_top
+
+        if self.space_top == 0:
+            while self.line_index < self.lines_count:
+                last_line = (self.line_index >= self.lines_count - 1)
+                line_height = self.text_lines[self.line_index].height
+                tmp_height = line_height
+                if self.line_index == 0:
+                    tmp_height += self.used_style.padding_top
+
+                if last_line:
+                    tmp_height += self.used_style.padding_bottom
+
+                if tmp_height > remaining_height:
+                    break
+
+                lines.append(self.text_lines[self.line_index])
+                remaining_height -= tmp_height
+                block_height += tmp_height
+                text_height += line_height
+                self.line_index += 1
+
+        if self.line_index >= self.lines_count and self.space_bottom > 0:
+            space_bottom = min(self.space_bottom, remaining_height)
+            self.space_bottom -= space_bottom
+            block_height += space_bottom
+            remaining_height -= space_bottom
+
+        if self.space_top == 0 and self.line_index == 0 and self.lines_count > 0:
+            # even first line does not fit
+            if offset_y != 0 or container_top != 0:
+                # either container is not at top of page or element is not at top inside container
+                # -> try on next page
+                return None, False
+            else:
+                # already on top of container -> raise error
+                raise ReportBroError(
+                    Error('errorMsgInvalidSize', object_id=self.id, field='height'))
+
+        rendering_complete = self.line_index >= self.lines_count and self.space_top == 0 and self.space_bottom == 0
+        if not rendering_complete and remaining_height > 0:
+            # draw text block until end of container
+            block_height += remaining_height
+            remaining_height = 0
+
+        if self.first_render_element and rendering_complete:
+            render_element_type = RenderElementType.complete
+        else:
+            if self.first_render_element:
+                render_element_type = RenderElementType.first
+            elif rendering_complete:
+                render_element_type = RenderElementType.last
+                if self.used_style.vertical_alignment == VerticalAlignment.bottom:
+                    # make sure text is exactly aligned to bottom
+                    tmp_offset_y = block_height - self.used_style.padding_bottom - text_height
+                    if tmp_offset_y > 0:
+                        text_offset_y = tmp_offset_y
+            else:
+                render_element_type = RenderElementType.between
+
+        text_block_elem = TextBlockFlexRowElement(
+            self.report, x=self.x, y=self.y, render_y=offset_y,
+            width=self.width, height=block_height, text_offset_y=text_offset_y,
+            lines=lines, render_element_type=render_element_type, style=self.used_style,
+            join_padding_left=self.join_padding_left
+        )
+        self.first_render_element = False
+        self.render_bottom = text_block_elem.render_bottom
+        self.rendering_complete = rendering_complete
+        return text_block_elem, rendering_complete

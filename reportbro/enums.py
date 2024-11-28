@@ -29,6 +29,7 @@ class DocElementType(Enum):
     frame = 9
     section = 10
     section_band = 11
+    checkbox = 12
 
 
 class ParameterType(Enum):

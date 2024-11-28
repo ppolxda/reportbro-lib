@@ -33,6 +33,7 @@ from .enums import *
 from .errors import Error, ReportBroError, ReportBroInternalError
 from .structs import Parameter, TextStyle
 from .utils import current_datetime_str, get_int_value, parse_datetime_string
+from .fonttools import DEFAULT_FONTS
 
 
 regex_valid_identifier = re.compile(r'^[^\d\W]\w*$', re.U)
@@ -575,6 +576,10 @@ class Report:
         assert isinstance(report_definition, dict)
         assert isinstance(data, dict)
         assert encode_error_handling in ('strict', 'ignore', 'replace')
+        if additional_fonts:
+            additional_fonts = DEFAULT_FONTS.fonts + additional_fonts
+        else:
+            additional_fonts = DEFAULT_FONTS.fonts
 
         self.errors = []
 
@@ -665,6 +670,8 @@ class Report:
                     elem = FrameElement(self, doc_element, self.containers)
                 elif element_type == DocElementType.section:
                     elem = SectionElement(self, doc_element, self.containers)
+                elif element_type == DocElementType.checkbox:
+                    elem = CheckboxElement(self, doc_element)
 
                 if elem and container:
                     if container.is_visible():
